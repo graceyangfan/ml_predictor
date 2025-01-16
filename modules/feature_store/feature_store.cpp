@@ -3,12 +3,15 @@
 Feature_Store::Feature_Store(
     double deltaT,
     int based_window,
-    int cache_length
+    int cache_length,
+    int max_sequence_length
 ) : deltaT(deltaT),
     based_window(based_window),
     cache_length(cache_length),
+    max_sequence_length(max_sequence_length),
     track_initialized(false),
-    image_initialized(false)
+    image_initialized(false),
+    sequence_ready(false)
 {
     this->Observe = new BatchVector(cache_length);
     this->Filter_P = new BatchVector(cache_length);
@@ -78,6 +81,7 @@ void Feature_Store::update(
             this->Base_Vector->row_element(0)
           )
         );
+        update_sequence_features();
     }
 }
 
@@ -474,6 +478,113 @@ void Feature_Store::update_image(const std::vector<unsigned char >& new_image_da
 
 const std::vector<unsigned char >& Feature_Store::get_image_data() const {
     return image_data;
+}
+
+std::vector<std::vector<double>> Feature_Store::get_trace_features_sequence(
+    int sequence_length,
+    int smooth_window,
+    int stride,
+    bool allow_incomplete
+) {
+    // 检查序列完整性
+    if (!allow_incomplete && !has_complete_sequence(sequence_length)) {
+        throw std::runtime_error("Incomplete sequence data");
+    }
+
+    std::vector<std::vector<double>> sequence_features;
+    sequence_features.reserve(sequence_length);
+
+    // 计算起始时间步
+    int start_step = std::max(0, 
+        static_cast<int>(Filter_P->clock_step) - sequence_length * stride);
+
+    // 从最早的时间步开始收集特征
+    for (int i = 0; i < sequence_length; ++i) {
+        int time_step = start_step + i * stride;
+        if (time_step >= Filter_P->clock_step) {
+            if (!allow_incomplete) {
+                throw std::runtime_error("Sequence truncated");
+            }
+            break;
+        }
+        sequence_features.push_back(
+            compute_single_timestep_features(time_step, smooth_window)
+        );
+    }
+
+    return sequence_features;
+}
+
+std::vector<double> Feature_Store::compute_single_timestep_features(
+    int time_step,
+    int smooth_window
+) {
+    // 获取指定时间步的数据
+    xt::xarray<double> filter_x_target = this->Filter_x_Target->row_element(time_step);
+    xt::xarray<double> filter_v_target = this->Filter_V_Target->row_element(time_step);
+    xt::xarray<double> filter_a_target = this->Filter_a_Target->row_element(time_step);
+
+    // 计算平滑特征
+    xt::xarray<double> smooth_stdv, smooth_meanv, smooth_stda, smooth_meana;
+    compute_smooth_features(
+        smooth_window,
+        filter_v_target,
+        filter_a_target,
+        smooth_stdv,
+        smooth_meanv,
+        smooth_stda,
+        smooth_meana
+    );
+
+    // 收集所有特征
+    std::vector<double> features;
+    features.reserve(37); // 预分配空间
+
+    // 添加基础特征
+    for (int i = 0; i < 3; ++i) {
+        features.push_back(filter_x_target[i]);
+        features.push_back(filter_v_target[i]);
+        features.push_back(filter_a_target[i]);
+    }
+
+    // 添加平滑特征
+    for (int i = 0; i < 3; ++i) {
+        features.push_back(smooth_stdv[i]);
+        features.push_back(smooth_meanv[i]);
+        features.push_back(smooth_stda[i]);
+        features.push_back(smooth_meana[i]);
+    }
+
+    // 计算并添加其他特征
+    std::vector<double> temp_features;
+    compute_curvature_features(smooth_meanv, smooth_meana, smooth_stdv, smooth_stda, temp_features);
+    features.insert(features.end(), temp_features.begin(), temp_features.end());
+
+    compute_similarity_features(smooth_meanv, smooth_meana, smooth_stdv, smooth_stda, temp_features);
+    features.insert(features.end(), temp_features.begin(), temp_features.end());
+
+    compute_angle_features(filter_x_target, filter_v_target, filter_a_target, temp_features);
+    features.insert(features.end(), temp_features.begin(), temp_features.end());
+
+    return features;
+}
+
+void Feature_Store::update_sequence_features(int smooth_window) {
+    // 使用现有的特征计算方法
+    std::vector<double> current_features = get_trace_features(smooth_window);
+    
+    sequence_features.push_back(current_features);
+    if (sequence_features.size() > max_sequence_length) {
+        sequence_features.pop_front();
+    }
+    sequence_ready = (sequence_features.size() == max_sequence_length);
+}
+
+const std::deque<std::vector<double>>& Feature_Store::get_trace_features_sequence() const {
+    if (!sequence_ready) {
+        throw std::runtime_error("Feature sequence not ready");
+    }
+    return sequence_features;
 }
 
 

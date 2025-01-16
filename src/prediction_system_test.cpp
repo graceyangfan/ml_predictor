@@ -1,4 +1,3 @@
-
 #include <iostream>
 #include <vector>
 #include <fstream>
@@ -281,6 +280,49 @@ bool test_complete_recognition_flow() {
         std::cerr << "Complete recognition flow test failed: " << e.what() << std::endl;
         return false;
     }
+}
+
+// 测试序列预测
+bool test_sequence_prediction() {
+    std::cout << "Running test: Sequence prediction..." << std::endl;
+    
+    PredictionSystem system(
+        "models/resnet18.pt",
+        "models/resnet18.pt",
+        "test_data/mean.npy",
+        "test_data/scale.npy",
+        5, 0.04, 20, 21,
+        DeviceType::CPU,
+        10  // sequence_length
+    );
+    
+    int target_id = 1;
+    system.add_target(target_id);
+    
+    // 更新足够的轨迹数据
+    for (int i = 0; i < 30; ++i) {
+        system.update_info_for_target_trace(
+            target_id,
+            1.0 + i, 2.0 + i, 3.0 + i,
+            0.1 + i, 0.2 + i, 0.3 + i,
+            0.01, 0.02, 0.03,
+            0.001, 0.002, 0.003
+        );
+    }
+    
+    // 更新图像数据
+    std::vector<unsigned char> image_data = read_binary_file("test_data/sample.jpg");
+    system.update_info_for_target_figure(target_id, image_data);
+    
+    // 测试预测
+    int predicted_class;
+    bool is_fusion;
+    bool success = system.get_fusion_target_recognition(target_id, predicted_class, is_fusion);
+    
+    TEST_ASSERT(success, "Prediction should succeed");
+    TEST_ASSERT(is_fusion, "Should use fusion prediction with both features ready");
+    
+    return true;
 }
 
 int main() {

@@ -15,9 +15,10 @@ private:
     
 public:
     TargetManager(
-        double deltaT = 0.04,
-        int based_window = 20,
-        int cache_length = 21 
+        double deltaT,
+        int based_window,
+        int cache_length,
+        int max_sequence_length
     );
     
     // 添加新目标

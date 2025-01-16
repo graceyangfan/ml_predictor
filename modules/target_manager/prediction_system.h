@@ -16,6 +16,9 @@ private:
     ImagePreprocessor image_preprocessor;
     TracePreprocessor trace_preprocessor;
     int trace_smooth_window;
+    int sequence_length;
+    int sequence_stride;
+    bool allow_incomplete_sequence;
 
     // 私有辅助函数
     std::vector<std::vector<double>> rescaleEvidence(
@@ -54,7 +57,10 @@ public:
         double target_delta_t,
         int target_based_window,
         int target_cache_length,
-        DeviceType device_type
+        DeviceType device_type,
+        int sequence_length = 10,
+        int sequence_stride = 1,
+        bool allow_incomplete = false
     );
 
     /**
@@ -79,16 +85,6 @@ public:
     );
 
     /**
-     * @brief 使用轨迹模型进行目标识别
-     * @param[out] trace_probs 输出的轨迹识别概率
-     * @throws std::runtime_error 如果目标不存在或未初始化
-     */
-    void trace_model_recognition(
-        int target_id,
-        std::vector<float>& trace_probs
-    );
-
-    /**
      * @brief 使用图像模型进行目标识别
      * @param[out] figure_probs 输出的图像识别概率
      * @throws std::runtime_error 如果目标不存在或未初始化
@@ -99,13 +95,31 @@ public:
     );
 
     /**
-     * @brief 融合轨迹和图像识别结果
-     * @return 最可能的目标类别索引
+     * @brief 获取目标预测结果
+     * @param target_id 目标ID
+     * @param[out] predicted_class 预测的类别
+     * @param[out] is_fusion 是否是融合预测结果
+     * @return 是否成功进行预测
+     * 
+     * 预测逻辑：
+     * 1. 如果图像未准备好，返回false
+     * 2. 如果图像和轨迹都准备好，返回融合预测结果
+     * 3. 如果只有图像准备好，返回图像预测结果
      */
-    int get_fusion_target_recognition(
+    bool get_fusion_target_recognition(
         int target_id,
-        std::vector<float>& trace_probs,
-        std::vector<float>& figure_probs
+        int& predicted_class,
+        bool& is_fusion
+    );
+
+    /**
+     * 使用序列数据进行轨迹识别
+     * @param target_id 目标ID
+     * @param trace_probs 输出的识别概率
+     */
+    void trace_model_sequence_recognition(
+        int target_id,
+        std::vector<float>& trace_probs
     );
 
     // 目标管理函数

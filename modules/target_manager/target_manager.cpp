@@ -4,7 +4,8 @@
 TargetManager::TargetManager(
     double deltaT,
     int based_window,
-    int cache_length
+    int cache_length,
+    int max_sequence_length
 ) : deltaT(deltaT),
     based_window(based_window),
     cache_length(cache_length)
@@ -20,7 +21,8 @@ void TargetManager::add_target(int target_id) {
     target_stores[target_id] = std::make_unique<Feature_Store>(
         deltaT,
         based_window,
-        cache_length
+        cache_length,
+        max_sequence_length
     );
 }
 

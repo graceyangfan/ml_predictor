@@ -92,28 +92,48 @@ bool PredictionSystem::update_info_for_target_figure(
 }
 
 
-void PredictionSystem::trace_model_recognition(
+void PredictionSystem::trace_model_sequence_recognition(
     int target_id,
     std::vector<float>& trace_probs
-)
-{
+) {
     auto feature_store = target_manager.get_feature_store(target_id);
     if (!feature_store) {
         throw std::runtime_error("Target not found");
     }
-    
-    if (!feature_store->is_track_initialized()) {
+
+    // 检查轨迹特征和序列是否都准备好
+    if (!feature_store->is_track_initialized() || !feature_store->is_sequence_ready()) {
+        trace_probs.clear();  // 清空结果表示未准备好
         return;
     }
 
-    // Get current features
-    std::vector<double> features = feature_store->get_trace_features(this->trace_smooth_window);
+    // 获取特征序列
+    const auto& sequence_features = feature_store->get_trace_features_sequence();
+
+    // 可选：返回特征序列用于调试
+    if (features_sequence) {
+        *features_sequence = std::vector<std::vector<double>>(
+            sequence_features.begin(), 
+            sequence_features.end()
+        );
+    }
+
+    // 预处理特征序列
+    std::vector<torch::Tensor> normalized_features;
+    normalized_features.reserve(sequence_features.size());
     
-    // Preprocess features and get predictions
-    torch::Tensor normalized_features = trace_preprocessor.transform(features);
-    torch::Tensor probs = target_recognition_model_trace.predict_proba(normalized_features);
-    
-    // Convert tensor to vector - fixed accessor usage
+    for (const auto& features : sequence_features) {
+        normalized_features.push_back(trace_preprocessor.transform(features));
+    }
+
+    // 构建序列张量 [1, seq_length, feature_dim]
+    torch::Tensor sequence_tensor = torch::stack(normalized_features)
+        .unsqueeze(0);  // 添加批次维度
+
+    // 获取预测结果
+    torch::Tensor probs = target_recognition_model_trace.predict_proba(sequence_tensor);
+
+    // 转换预测结果为vector
     torch::Tensor squeezed_probs = probs.squeeze();
     auto probs_accessor = squeezed_probs.accessor<float,1>();
     trace_probs.resize(probs_accessor.size(0));
@@ -125,14 +145,14 @@ void PredictionSystem::trace_model_recognition(
 void PredictionSystem::figure_model_recognition(
     int target_id,
     std::vector<float>& figure_probs
-)
-{
+) {
     auto feature_store = target_manager.get_feature_store(target_id);
     if (!feature_store) {
         throw std::runtime_error("Target not found");
     }
     
     if (!feature_store->is_image_initialized()) {
+        figure_probs.clear();  // 清空结果表示未准备好
         return;
     }
 
@@ -143,7 +163,7 @@ void PredictionSystem::figure_model_recognition(
     // Get predictions
     torch::Tensor probs = target_recognition_model_figure.predict_proba(normalized_image);
     
-    // Convert tensor to vector - fixed accessor usage
+    // Convert tensor to vector
     torch::Tensor squeezed_probs = probs.squeeze();
     auto probs_accessor = squeezed_probs.accessor<float,1>();
     figure_probs.resize(probs_accessor.size(0));
@@ -152,24 +172,51 @@ void PredictionSystem::figure_model_recognition(
     }
 }
 
-int PredictionSystem::get_fusion_target_recognition(
+bool PredictionSystem::get_fusion_target_recognition(
     int target_id,
-    std::vector<float> & trace_probs,
-    std::vector<float> & figure_probs
-)
-{
-    //fuse trace and figure probs
-    std::vector<float> fused_probs = fuse_recognition_results(trace_probs, figure_probs);
-    std::cout << "Fused Probabilities: [";
-    for (size_t i = 0; i < fused_probs.size(); ++i) {
-        std::cout << std::fixed << std::setprecision(4) << fused_probs[i];
-        if (i < fused_probs.size() - 1) {
-            std::cout << ", ";
+    int& predicted_class,
+    bool& is_fusion
+) {
+    auto feature_store = target_manager.get_feature_store(target_id);
+    if (!feature_store) {
+        return false;
+    }
+
+    // 首先检查图像是否准备好
+    if (!feature_store->is_image_initialized()) {
+        return false;  // 图像未准备好，不进行预测
+    }
+
+    // 获取图像预测结果
+    std::vector<float> figure_probs;
+    figure_model_recognition(target_id, figure_probs);
+    if (figure_probs.empty()) {
+        return false;  // 图像预测失败
+    }
+
+    // 检查轨迹特征是否准备好
+    bool trace_ready = feature_store->is_track_initialized() && 
+                      feature_store->is_sequence_ready();
+
+    if (trace_ready) {
+        // 获取轨迹预测结果
+        std::vector<float> trace_probs;
+        trace_model_sequence_recognition(target_id, trace_probs);
+        if (!trace_probs.empty()) {
+            // 两种特征都准备好了，进行融合
+            std::vector<float> fused_probs = fuse_recognition_results(figure_probs, trace_probs);
+            auto max_it = std::max_element(fused_probs.begin(), fused_probs.end());
+            predicted_class = std::distance(fused_probs.begin(), max_it);
+            is_fusion = true;
+            return true;
         }
     }
-    //get class with maximum probability
-    auto max_it = std::max_element(fused_probs.begin(), fused_probs.end());
-    return std::distance(fused_probs.begin(), max_it);
+
+    // 只有图像特征可用
+    auto max_it = std::max_element(figure_probs.begin(), figure_probs.end());
+    predicted_class = std::distance(figure_probs.begin(), max_it);
+    is_fusion = false;
+    return true;
 }
 
 std::vector<float> PredictionSystem::fuse_recognition_results(

@@ -137,6 +137,42 @@ bool test_feature_store_vector_operations() {
     return true;
 }
 
+// 添加序列特征测试
+bool test_sequence_features() {
+    std::cout << "Running test: Sequence features..." << std::endl;
+    
+    Feature_Store store(0.04, 5, 6, 10);  // max_sequence_length = 10
+    
+    // 更新足够多的数据以填充序列
+    for (int i = 0; i < 15; ++i) {
+        store.update(
+            1.0 + i, 2.0 + i, 3.0 + i,  // Observe
+            0.1 + i, 0.2 + i, 0.3 + i,  // Filter_P
+            0.01, 0.02, 0.03,           // Filter_V
+            0.001, 0.002, 0.003         // Filter_a
+        );
+    }
+    
+    // 检查序列是否准备好
+    TEST_ASSERT(store.is_sequence_ready(), "Sequence should be ready after sufficient updates");
+    
+    // 获取序列并验证
+    try {
+        const auto& sequence = store.get_trace_features_sequence();
+        TEST_ASSERT(sequence.size() == 10, "Sequence should have exactly 10 elements");
+        
+        // 验证每个特征向量的维度
+        for (const auto& features : sequence) {
+            TEST_ASSERT(features.size() == 37, "Each feature vector should have 37 dimensions");
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to get sequence: " << e.what() << std::endl;
+        return false;
+    }
+    
+    return true;
+}
+
 int main() {
     bool all_passed = true;
     
@@ -145,6 +181,7 @@ int main() {
         all_passed &= test_feature_store_track_updates();
         all_passed &= test_feature_store_image_handling();
         all_passed &= test_feature_store_vector_operations();
+        all_passed &= test_sequence_features();
         
         std::cout << "\n=== Test Summary ===\n";
         if (all_passed) {

@@ -25,6 +25,9 @@ class Feature_Store
     private:
         bool track_initialized = false;  // 航迹特征是否初始化
         bool image_initialized = false;  // 图像是否初始化
+        std::deque<std::vector<double>> sequence_features;  // 存储固定长度的特征序列
+        int max_sequence_length;  // 序列最大长度
+        bool sequence_ready = false;      // 序列是否准备就绪
             
         void compute_smooth_features(int smooth_window,
             const xt::xarray<double>& filter_v_target,
@@ -54,11 +57,29 @@ class Feature_Store
             const xt::xarray<double>& filter_a_target,
             std::vector<double>& features);
 
+        /**
+         * 计算单个时间步的特征
+         * @param time_step 时间步索引
+         * @param smooth_window 平滑窗口大小
+         * @return 该时间步的特征向量
+         */
+        std::vector<double> compute_single_timestep_features(
+            int time_step,
+            int smooth_window
+        );
+
+        /**
+         * 更新特征序列
+         * 当基准向量准备好后，计算并添加新的特征
+         */
+        void update_sequence_features(int smooth_window = 5);
+
     public:
         Feature_Store(
             double deltaT,
             int based_window,
-            int cache_length
+            int cache_length,
+            int max_sequence_length = 10  // 新增参数
         );
         ~Feature_Store();
 
@@ -97,5 +118,25 @@ class Feature_Store
         // 图像数据相关函数
         void update_image(const std::vector<unsigned char>& new_image_data);
         const std::vector<unsigned char>& get_image_data() const;
+
+        /**
+         * 获取特征序列
+         * @return 当前的特征序列
+         * @throws std::runtime_error 如果序列未准备就绪
+         */
+        const std::deque<std::vector<double>>& get_trace_features_sequence() const {
+            if (!sequence_ready) {
+                throw std::runtime_error("Feature sequence not ready");
+            }
+            return sequence_features;
+        }
+
+        /**
+         * 检查特征序列是否准备就绪
+         * @return 如果序列已满则返回true
+         */
+        bool is_sequence_ready() const { 
+            return sequence_ready; 
+        }
 };
 #endif 
